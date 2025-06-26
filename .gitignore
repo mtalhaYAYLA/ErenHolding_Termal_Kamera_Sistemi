@@ -1,0 +1,6 @@
+REST_API/yangın_algılama_ve_olay yönetim sistemi/__pycache__
+# Önce klasör içeriğini ignore et
+REST_API/yangın_algılama_ve_olay yönetim sistemi/events/*
+
+# Ama klasörün kendisini git'e dahil etmek için:
+!REST_API/yangın_algılama_ve_olay yönetim sistemi/events/.gitkeep
