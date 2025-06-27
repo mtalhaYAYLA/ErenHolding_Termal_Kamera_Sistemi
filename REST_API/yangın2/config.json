@@ -1,0 +1,26 @@
+{
+    "cameras": [
+      {
+        "id": 1,
+        "name": "Depo Alanı Kamera",
+        "enabled": true,
+        "ip": "192.168.1.64",
+        "user": "admin",
+        "password": "ErenEnerji",
+        "rtsp_normal": "rtsp://admin:ErenEnerji@192.168.1.64:554/Streaming/Channels/101",
+        "rtsp_thermal": "rtsp://admin:ErenEnerji@192.168.1.64:554/Streaming/Channels/201",
+        "autonomous_scan": {
+          "enabled": true,
+          "pan_start": 45.0,
+          "pan_end": 135.0,
+          "tilt": 0.0,
+          "speed": 0.1,
+          "dwell_time": 2.0
+        },
+        "anomaly_detection": {
+          "thermal_threshold": 80.0
+        },
+        "manual_override_timeout": 120.0
+      }
+    ]
+  }

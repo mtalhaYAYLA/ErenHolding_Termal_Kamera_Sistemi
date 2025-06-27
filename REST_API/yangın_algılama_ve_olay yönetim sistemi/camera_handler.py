@@ -45,7 +45,7 @@ def capture_snapshot(rtsp_url: str) -> bytes | None:
     finally:
         if cap:
             cap.release()
-
+ 
 def get_ptz_status() -> dict | None:
     """
     Kameranın anlık Pan ve Tilt pozisyonunu derece cinsinden alır.

@@ -15,7 +15,7 @@ PTZ_STATUS_URL = f'http://{CAMERA_IP}/ISAPI/PTZCtrl/channels/1/status'
 
 # --- ALARM AYARLARI ---
 # Bu sıcaklığın (°C) üzerine çıkıldığında alarm tetiklenir.
-ALARM_TEMPERATURE = 40.0#75.0
+ALARM_TEMPERATURE = 75.0
 
 # Arka arkaya sürekli olay oluşturmasını engellemek için bekleme süresi (saniye).
 EVENT_COOLDOWN_SECONDS = 60
