@@ -98,10 +98,9 @@ class App(QWidget):
         super().__init__()
         self.setWindowTitle("Gelişmiş Kamera Kontrol Paneli")
         self.normal_thread, self.thermal_thread, self.onvif_controller = None, None, None
-        self.is_scanning_360 = False
-        self.is_interval_scanning = False
-        self.scan_phase = "stopped"  # YENİ: Tarama durumunu tutar: "stopped", "moving_to_start", "scanning"
+        self.is_scanning_360, self.is_interval_scanning = False, False
         self.scan_params = {}
+        self.scan_direction = 1
         
         self.ptz_status_timer = QTimer(self); self.ptz_status_timer.timeout.connect(self.update_ptz_status_display)
         self.interval_scan_timer = QTimer(self); self.interval_scan_timer.timeout.connect(self.execute_interval_scan_step)
@@ -225,7 +224,7 @@ class App(QWidget):
                 self.update_thermal_rect_from_zoom(pos_raw['zoom'])
 
     def stop_ptz_move(self):
-        if self.onvif_controller and not self.is_scanning_360 and self.scan_phase == "stopped":
+        if self.onvif_controller and not self.is_scanning_360 and not self.is_interval_scanning:
             self.onvif_controller.stop_move(); self.set_current_speed(0.0)
             
     def update_normal_image(self, qt_image): self.normal_pixmap = QPixmap.fromImage(qt_image); self.normal_video_label.setPixmap(self.normal_pixmap)
@@ -242,12 +241,13 @@ class App(QWidget):
             self.scan_360_button.setText("360° Tarama Başlat"); self.onvif_controller.stop_move(); self.set_current_speed(0.0)
 
     # =====================================================================================
-    #  SINIRLI TARAMA BAŞLATMA FONKSİYONU (YENİ MANTIK)
+    #  SINIRLI TARAMA BAŞLATMA FONKSİYONU (YENİ "EN YAKINA GİT" MANTIĞI)
     # =====================================================================================
     def toggle_interval_scan(self, checked):
         if not self.onvif_controller: return
         self.is_interval_scanning = checked
-        self.scan_360_button.setEnabled(not checked); self.btn_go_to_target.setEnabled(not checked)
+        self.scan_360_button.setEnabled(not checked)
+        self.btn_go_to_target.setEnabled(not checked)
         
         if checked:
             try:
@@ -256,36 +256,35 @@ class App(QWidget):
                 tilt_fixed_deg = float(self.tilt_fixed_input.text().replace(',', '.'))
                 speed = self.get_manual_speed()
 
-                current_pos = self.onvif_controller.get_current_position()
-                if not current_pos:
+                current_pos_raw = self.onvif_controller.get_current_position()
+                if not current_pos_raw:
                     QMessageBox.warning(self, "Hata", "Kameranın mevcut pozisyonu alınamadı.")
                     self.interval_scan_button.setChecked(False); self.is_interval_scanning = False
                     return
 
-                # Adım 1: Gerekli parametreleri hesapla ve sakla
-                p1_onvif, tilt_onvif = self._convert_degrees_to_ptz(pan_start_deg, tilt_fixed_deg)
-                p2_onvif, _ = self._convert_degrees_to_ptz(pan_end_deg, tilt_fixed_deg)
+                current_pos_deg = self._convert_ptz_to_degrees(current_pos_raw)
                 
-                dist_p1 = abs(current_pos['pan'] - p1_onvif)
-                dist_p2 = abs(current_pos['pan'] - p2_onvif)
+                # Sınırları ve hedefi DERECE olarak sakla
+                dist_p1 = abs(current_pos_deg['pan'] - pan_start_deg)
+                dist_p2 = abs(current_pos_deg['pan'] - pan_end_deg)
 
-                # En yakın başlangıç noktasını ve yönü belirle
-                initial_target = p1_onvif if dist_p1 <= dist_p2 else p2_onvif
-                direction = 1 if initial_target == p1_onvif else -1
+                initial_target_deg = pan_start_deg if dist_p1 <= dist_p2 else pan_end_deg
                 
                 self.scan_params = {
-                    'min_pan': min(p1_onvif, p2_onvif),
-                    'max_pan': max(p1_onvif, p2_onvif),
-                    'tilt': tilt_onvif,
-                    'initial_target': initial_target,
-                    'direction': direction
+                    'min_deg': min(pan_start_deg, pan_end_deg),
+                    'max_deg': max(pan_start_deg, pan_end_deg),
+                    'initial_target_deg': initial_target_deg
                 }
 
-                # Adım 2: "Başlangıç noktasına git" fazını başlat
+                # Adım 1: "Başlangıç noktasına git" fazını başlat
                 self.scan_phase = "moving_to_start"
                 self.interval_scan_button.setText("Sınırlı Taramayı Durdur")
                 self.set_current_speed(speed)
-                self.onvif_controller.move_absolute_with_speed(initial_target, tilt_onvif, current_pos['zoom'], {'PanTilt': {'x': speed, 'y': speed}})
+                
+                # Hedefe gitmek için ONVIF değerlerini hesapla
+                target_pan_onvif, target_tilt_onvif = self._convert_degrees_to_ptz(initial_target_deg, tilt_fixed_deg)
+                
+                self.onvif_controller.move_absolute_with_speed(target_pan_onvif, target_tilt_onvif, current_pos_raw['zoom'], {'PanTilt': {'x': speed, 'y': speed}})
                 self.interval_scan_timer.start(250)
             
             except ValueError as e:
@@ -293,49 +292,44 @@ class App(QWidget):
                 self.interval_scan_button.setChecked(False); self.is_interval_scanning = False
                 self.scan_360_button.setEnabled(True); self.btn_go_to_target.setEnabled(True)
         else:
-            # Tarama durdurma
-            self.interval_scan_timer.stop()
-            self.onvif_controller.stop_move()
-            self.scan_phase = "stopped"
-            self.interval_scan_button.setText("Sınırlı Taramayı Başlat")
+            self.interval_scan_timer.stop(); self.onvif_controller.stop_move()
+            self.scan_phase = "stopped"; self.interval_scan_button.setText("Sınırlı Taramayı Başlat")
             self.set_current_speed(0.0)
 
     # =====================================================================================
-    #  TARAMA DÖNGÜSÜ FONKSİYONU (YENİ İKİ AŞAMALI MANTIK)
+    #  TARAMA DÖNGÜSÜ (YENİ DERECE BAZLI KONTROL)
     # =====================================================================================
     def execute_interval_scan_step(self):
-        if self.scan_phase == "stopped":
+        if not self.is_interval_scanning:
             self.interval_scan_timer.stop(); return
         
-        pos = self.onvif_controller.get_current_position()
-        if not pos: return
+        pos_raw = self.onvif_controller.get_current_position()
+        if not pos_raw: return
 
+        pos_deg = self._convert_ptz_to_degrees(pos_raw)
+        current_pan_deg = pos_deg['pan']
         speed = self.get_manual_speed()
         self.set_current_speed(speed)
-        current_pan = pos['pan']
-
-        # FAZ 1: Başlangıç noktasına varışı kontrol et
+        
+        # FAZ 1: Başlangıç noktasına varışı DERECE olarak kontrol et
         if self.scan_phase == "moving_to_start":
-            if abs(current_pan - self.scan_params['initial_target']) < 0.02:
-                # Başlangıç noktasına varıldı, şimdi sürekli taramaya geç
+            if abs(current_pan_deg - self.scan_params['initial_target_deg']) < 1.0: # 1 derecelik tolerans
                 self.scan_phase = "scanning"
-                # Yönü, başlangıç noktasına göre ayarla. p1'e geldiysek p2'ye (sağa), p2'ye geldiysek p1'e (sola) git.
-                direction = 1 if self.scan_params['initial_target'] == self.scan_params['min_pan'] else -1
-                self.scan_params['direction'] = direction
+                # Başlangıç noktasına göre yönü belirle
+                direction = 1 if self.scan_params['initial_target_deg'] == self.scan_params['min_deg'] else -1
+                self.scan_direction = direction
                 self.onvif_controller.move_continuous(speed * direction, 0, 0)
         
-        # FAZ 2: Sürekli tarama ve sınır kontrolü
+        # FAZ 2: Sürekli tarama ve sınırları DERECE olarak kontrol et
         elif self.scan_phase == "scanning":
-            direction = self.scan_params['direction']
             # Üst sınıra ulaşıldı mı ve sağa mı gidiyor?
-            if current_pan >= self.scan_params['max_pan'] and direction == 1:
-                self.scan_params['direction'] = -1 # Yönü ters çevir
+            if current_pan_deg >= self.scan_params['max_deg'] and self.scan_direction == 1:
+                self.scan_direction = -1 # Yönü ters çevir
                 self.onvif_controller.move_continuous(speed * -1, 0, 0)
             # Alt sınıra ulaşıldı mı ve sola mı gidiyor?
-            elif current_pan <= self.scan_params['min_pan'] and direction == -1:
-                self.scan_params['direction'] = 1 # Yönü ters çevir
+            elif current_pan_deg <= self.scan_params['min_deg'] and self.scan_direction == -1:
+                self.scan_direction = 1 # Yönü ters çevir
                 self.onvif_controller.move_continuous(speed * 1, 0, 0)
-
 
     def go_to_target_position(self):
         if not self.onvif_controller or not self.onvif_controller.is_connected: return
