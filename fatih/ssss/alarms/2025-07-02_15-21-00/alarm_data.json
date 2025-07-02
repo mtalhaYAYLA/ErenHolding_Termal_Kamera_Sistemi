@@ -1,0 +1,59 @@
+{
+    "ThermometryUploadList": {
+        "ThermometryUpload": [
+            {
+                "relativeTime": 1707406649,
+                "absTime": 1707373881,
+                "ruleName": "ID:1",
+                "ruleID": 1,
+                "ruleCalibType": 1,
+                "presetNo": 1,
+                "LinePolygonThermCfg": {
+                    "MaxTemperature": 27.5,
+                    "MinTemperature": 26.2,
+                    "AverageTemperature": 26.7,
+                    "TemperatureDiff": 1.3,
+                    "Region": [
+                        {
+                            "Point": {
+                                "positionX": 0.042,
+                                "positionY": 0.07
+                            }
+                        },
+                        {
+                            "Point": {
+                                "positionX": 0.037,
+                                "positionY": 0.93
+                            }
+                        },
+                        {
+                            "Point": {
+                                "positionX": 0.956,
+                                "positionY": 0.965
+                            }
+                        },
+                        {
+                            "Point": {
+                                "positionX": 0.956,
+                                "positionY": 0.063
+                            }
+                        }
+                    ]
+                },
+                "thermometryUnit": 0,
+                "dataType": 2,
+                "isFreezedata": false,
+                "HighestPoint": {
+                    "positionX": 0.198,
+                    "positionY": 0.854
+                },
+                "LowestPoint": {
+                    "positionX": 0.601,
+                    "positionY": 0.286
+                },
+                "faceSnapThermometryEnabled": false,
+                "timestamp": 19138286
+            }
+        ]
+    }
+}

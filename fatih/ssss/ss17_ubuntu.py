@@ -10,15 +10,17 @@ import numpy as np
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout,
     QHBoxLayout, QGridLayout, QGroupBox, QLineEdit, QFormLayout,
-    QSpinBox, QListWidget  # QListWidget eklendi
+    QSpinBox, QTableWidget, QTableWidgetItem, QHeaderView
 )
-from PyQt5.QtGui import QImage, QPixmap, QColor, QIcon # QColor ve QICon eklendi
+from PyQt5.QtGui import QImage, QPixmap, QColor, QIcon
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot
 from onvif import ONVIFCamera
 from requests.auth import HTTPDigestAuth
 
-# HATA DÜZELTME: OpenCV'nin RTSP için TCP kullanmasını sağla (video akışı stabilitesini artırır)
+# OpenCV'nin RTSP için TCP kullanmasını sağla (video akışı stabilitesi)
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+#PyQT GUI Hatası için
+os.environ['QT_XCB_GL_INTEGRATION'] = 'none'
 
 # === KAMERA BİLGİLERİ ===
 CAMERA_IP = '192.168.1.64'
@@ -35,9 +37,9 @@ RTSP_URL_THERMAL = f'rtsp://{CAMERA_USER}:{CAMERA_PASS}@{CAMERA_IP}:554/Streamin
 REALTIME_THERMOMETRY_URL = f'http://{CAMERA_IP}/ISAPI/Thermal/channels/2/thermometry/realTimethermometry/rules?format=json'
 PTZ_STATUS_URL = f'http://{CAMERA_IP}/ISAPI/PTZCtrl/channels/1/status'
 
+
 # === Hata Yönetimli Video Thread ===
 class RTSPVideoThread(QThread):
-    # ... (Bu sınıfta değişiklik yok, aynı kalıyor)
     change_pixmap_signal = pyqtSignal(QImage)
     connection_status_signal = pyqtSignal(str)
 
@@ -58,25 +60,19 @@ class RTSPVideoThread(QThread):
                     self.connection_status_signal.emit(f"{self.stream_name}: Bağlantı Hatası")
                     time.sleep(5)
                     continue
-
                 self.connection_status_signal.emit(f"{self.stream_name}: Bağlandı")
-                
                 while self._run_flag:
                     ret, frame = cap.read()
                     if not ret or frame is None:
                         self.connection_status_signal.emit(f"{self.stream_name}: Veri Alınamıyor...")
                         break
-                    
                     if len(frame.shape) < 3: continue
-
                     with self.parent_ui.frame_lock:
                         if self.is_thermal:
                             self.parent_ui.latest_thermal_frame = frame.copy()
                         else:
                             self.parent_ui.latest_normal_frame = frame.copy()
-
                     h_frame, w_frame, _ = frame.shape
-
                     if self.is_thermal:
                         if self.parent_ui.thermal_hotspot_coords and self.parent_ui.last_max_temp is not None:
                             x, y = self.parent_ui.thermal_hotspot_coords
@@ -84,14 +80,12 @@ class RTSPVideoThread(QThread):
                             cv2.drawMarker(frame, (px, py), (0, 0, 255), cv2.MARKER_CROSS, 20, 2)
                             temp_text = f"MAKS: {self.parent_ui.last_max_temp:.1f} C"
                             cv2.putText(frame, temp_text, (px + 15, py - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-                        
                         if self.parent_ui.thermal_coldspot_coords and self.parent_ui.last_min_temp is not None:
                             x, y = self.parent_ui.thermal_coldspot_coords
                             px, py = int(x * w_frame), int(y * h_frame)
                             cv2.drawMarker(frame, (px, py), (255, 0, 0), cv2.MARKER_CROSS, 20, 2)
                             temp_text = f"MIN: {self.parent_ui.last_min_temp:.1f} C"
                             cv2.putText(frame, temp_text, (px + 15, py + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
-                    
                     rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     qt_img = QImage(rgb_image.data, w_frame, h_frame, 3 * w_frame, QImage.Format_RGB888)
                     scaled_img = qt_img.scaled(640, 360, Qt.KeepAspectRatio)
@@ -111,16 +105,13 @@ class RTSPVideoThread(QThread):
 
 # === Gerçek Zamanlı Termal Veri Alan Thread ===
 class ThermalDataThread(QThread):
-    # ... (Bu sınıfta değişiklik yok, aynı kalıyor)
     thermal_data_updated = pyqtSignal(dict)
     connection_status = pyqtSignal(str)
-
     def __init__(self, url, user, password):
         super().__init__()
         self._run_flag = True
         self.url = url
         self.auth = HTTPDigestAuth(user, password)
-
     def run(self):
         while self._run_flag:
             try:
@@ -151,7 +142,6 @@ class ThermalDataThread(QThread):
                 self.connection_status.emit("Termal Veri: Bağlantı Hatası")
                 time.sleep(5)
         print("Termal Veri Thread durdu.")
-
     def stop(self):
         self._run_flag = False
         self.wait()
@@ -161,11 +151,13 @@ class PTZControlApp(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Kalibrasyonlu Termal PTZ Kontrol Paneli")
-        self.setWindowIcon(QIcon('aisoft_logo.png')) #Logo değişkeni
-        self.setGeometry(100, 100, 1400, 1050) # Pencere yüksekliği artırıldı
+        self.setGeometry(100, 100, 1400, 1050)
         
-        self.rotating = False
+        # PTZ Değişkenleri
         self.ptz = None
+        self.profile = None 
+        self.token = None   
+        self.rotating = False
         self.auth = HTTPDigestAuth(CAMERA_USER, CAMERA_PASS)
         
         self.last_max_temp = None
@@ -176,20 +168,18 @@ class PTZControlApp(QWidget):
         
         self.latest_normal_frame = None
         self.latest_thermal_frame = None
+        self.last_thermal_data = None # JSON verisini saklamak için değişken
         self.frame_lock = threading.Lock()
         self.last_alarm_time = 0
         self.alarms_base_dir = "alarms"
         os.makedirs(self.alarms_base_dir, exist_ok=True)
         
-        # === YENİ: ALARM GEÇMİŞİ İÇİN LİSTE ===
         self.alarm_history = []
-        # ======================================
         
         self.init_onvif()
         self.init_ui()
 
     def showEvent(self, event):
-        # ... (Bu fonksiyonda değişiklik yok)
         super().showEvent(event)
         if not hasattr(self, 'threads_started') or not self.threads_started:
             self.init_threads()
@@ -197,27 +187,45 @@ class PTZControlApp(QWidget):
             threading.Timer(1.0, self.load_initial_data).start()
 
     def init_onvif(self):
-        # ... (Bu fonksiyonda değişiklik yok)
         try:
-            # WSDL dosyalarının konumu belirtilebilir, bu bazı ağlarda bağlantıyı hızlandırır
-            wsdl_dir = os.path.join(os.getcwd(), 'wsdl')
-            if not os.path.exists(wsdl_dir):
-                os.makedirs(wsdl_dir)
-            self.cam = ONVIFCamera(CAMERA_IP, CAMERA_PORT, CAMERA_USER, CAMERA_PASS, wsdl_dir)
+            print("ONVIF: Kamera ile bağlantı kuruluyor...")
+            self.cam = ONVIFCamera(CAMERA_IP, CAMERA_PORT, CAMERA_USER, CAMERA_PASS)
+            
+            print("ONVIF: PTZ servisi oluşturuluyor...")
             self.ptz = self.cam.create_ptz_service()
+            
+            print("ONVIF: Medya servisleri alınıyor...")
             media_service = self.cam.create_media_service()
-            self.profile = media_service.GetProfiles()[0]
+            
+            profiles = media_service.GetProfiles()
+            self.profile = None
+            for p in profiles:
+                if hasattr(p, 'PTZConfiguration') and p.PTZConfiguration is not None:
+                    self.profile = p
+                    print(f"ONVIF: PTZ uyumlu profil bulundu: {p.Name} ({p.token})")
+                    break
+
+            if not self.profile:
+                print("HATA: Kamerada PTZ destekli bir medya profili bulunamadı!")
+                self.ptz = None
+                return
+
             self.token = self.profile.token
+            
             ptz_config_options = self.ptz.GetConfigurationOptions({'ConfigurationToken': self.profile.PTZConfiguration.token})
             if ptz_config_options.Spaces and ptz_config_options.Spaces.AbsolutePanTiltPositionSpace:
                 pan_limits = ptz_config_options.Spaces.AbsolutePanTiltPositionSpace[0].XRange
                 tilt_limits = ptz_config_options.Spaces.AbsolutePanTiltPositionSpace[0].YRange
                 self.ptz_limits.update({'pan_min': pan_limits.Min, 'pan_max': pan_limits.Max, 'tilt_min': tilt_limits.Min, 'tilt_max': tilt_limits.Max})
+            
             print(f"ONVIF bağlantısı başarılı. Gerçek PTZ Limitleri: Pan [{self.ptz_limits['pan_min']:.2f}, {self.ptz_limits['pan_max']:.2f}], Tilt [{self.ptz_limits['tilt_min']:.2f}, {self.ptz_limits['tilt_max']:.2f}]")
-        except Exception as e:
-            print(f"ONVIF bağlantı/limit alma hatası: {e}. Varsayılan limitler kullanılacak.")
-            self.ptz = None
 
+        except Exception as e:
+            print(f" ONVIF bağlantısı veya profil yapılandırması başarısız: {e}")
+            print("Lütfen kamera IP, port, kullanıcı adı/şifre ve ağ bağlantınızı kontrol edin.")
+            print("Kameranın web arayüzünden ONVIF'in etkinleştirildiğinden emin olun.")
+            self.ptz = None
+    
     def init_ui(self):
         main_layout = QHBoxLayout()
         camera_layout = QVBoxLayout()
@@ -231,8 +239,22 @@ class PTZControlApp(QWidget):
         camera_layout.addWidget(self.camera2_label)
         
         right_panel_layout = QVBoxLayout()
-        
-        # PTZ Kutusu (değişiklik yok)
+
+        # === LOGO EKLEME ===
+        logo_label = QLabel()
+        pixmap = QPixmap("/home/fatih/Desktop/AISOFT/fatih/ssss/aisoft_logo.png") 
+        if not pixmap.isNull():
+            # Logoyu istediğiniz genişliğe göre ölçeklendirin
+            pixmap = pixmap.scaledToWidth(200, Qt.SmoothTransformation) 
+            logo_label.setPixmap(pixmap)
+            # Logoyu ortalamak için
+            logo_label.setAlignment(Qt.AlignCenter) 
+            # Logoyu sağ panelin en üstüne ekleyin
+            right_panel_layout.addWidget(logo_label)
+        else:
+            print("UYARI: Logo dosyası yüklenemedi. Yolu kontrol edin.")
+
+
         ptz_main_box = QGroupBox("PTZ Kontrol")
         ptz_main_layout = QVBoxLayout()
         ptz_directional_layout = QGridLayout()
@@ -258,90 +280,71 @@ class PTZControlApp(QWidget):
         ptz_main_layout.addLayout(ptz_directional_layout)
         ptz_main_layout.addLayout(ptz_absolute_layout)
         ptz_main_box.setLayout(ptz_main_layout)
-
-        # Termal Veri Kutusu (değişiklik yok)
+        
         thermal_box = QGroupBox("Termal Veri")
         temp_info_layout = QFormLayout()
-        self.temp_avg_label = QLabel("-")
-        self.max_point_temp_label = QLabel("-")
-        self.max_point_pos_label = QLabel("-")
-        self.min_point_temp_label = QLabel("-")
-        self.min_point_pos_label = QLabel("-")
+        self.temp_avg_label = QLabel("-"); self.max_point_temp_label = QLabel("-"); self.max_point_pos_label = QLabel("-")
+        self.min_point_temp_label = QLabel("-"); self.min_point_pos_label = QLabel("-")
         temp_info_layout.addRow("Bölge Ort. Sıcaklık:", self.temp_avg_label)
-        separator_style = "font-weight: bold; margin-top: 5px; color: red;"
-        max_label = QLabel("--- En Sıcak Nokta ---")
-        max_label.setStyleSheet(separator_style)
-        temp_info_layout.addRow(max_label)
-        temp_info_layout.addRow("Sıcaklık:", self.max_point_temp_label)
-        temp_info_layout.addRow("Pozisyon (X, Y):", self.max_point_pos_label)
-        min_label_style = "font-weight: bold; margin-top: 5px; color: cyan;"
-        min_label = QLabel("--- En Soğuk Nokta ---")
-        min_label.setStyleSheet(min_label_style)
-        temp_info_layout.addRow(min_label)
-        temp_info_layout.addRow("Sıcaklık:", self.min_point_temp_label)
-        temp_info_layout.addRow("Pozisyon (X, Y):", self.min_point_pos_label)
+        max_label = QLabel("--- En Sıcak Nokta ---"); max_label.setStyleSheet("font-weight: bold; margin-top: 5px; color: red;")
+        temp_info_layout.addRow(max_label); temp_info_layout.addRow("Sıcaklık:", self.max_point_temp_label); temp_info_layout.addRow("Pozisyon (X, Y):", self.max_point_pos_label)
+        min_label = QLabel("--- En Soğuk Nokta ---"); min_label.setStyleSheet("font-weight: bold; margin-top: 5px; color: cyan;")
+        temp_info_layout.addRow(min_label); temp_info_layout.addRow("Sıcaklık:", self.min_point_temp_label); temp_info_layout.addRow("Pozisyon (X, Y):", self.min_point_pos_label)
         thermal_box.setLayout(temp_info_layout)
-        
-        # Alarm Ayarları Kutusu (değişiklik yok)
         alarm_box = QGroupBox("Alarm ve Kayıt Ayarları")
         alarm_layout = QFormLayout()
-        self.alarm_threshold_input = QLineEdit("80.0")
-        self.alarm_cooldown_input = QSpinBox()
-        self.alarm_cooldown_input.setRange(5, 300)
-        self.alarm_cooldown_input.setValue(30)
-        self.alarm_cooldown_input.setSuffix(" sn")
-        self.alarm_dir_input = QLineEdit(self.alarms_base_dir)
-        self.alarm_dir_input.textChanged.connect(self.update_alarm_dir)
-        self.last_alarm_label = QLabel("Henüz alarm yok.")
-        self.last_alarm_label.setWordWrap(True)
-        alarm_layout.addRow("Alarm Eşiği (> °C):", self.alarm_threshold_input)
-        alarm_layout.addRow("Alarm Sonrası Bekleme:", self.alarm_cooldown_input)
-        alarm_layout.addRow("Kayıt Klasörü:", self.alarm_dir_input)
-        alarm_layout.addRow("Son Alarm Durumu:", self.last_alarm_label)
+        self.alarm_threshold_input = QLineEdit("80.0"); self.alarm_cooldown_input = QSpinBox()
+        self.alarm_cooldown_input.setRange(5, 300); self.alarm_cooldown_input.setValue(30); self.alarm_cooldown_input.setSuffix(" sn")
+        self.alarm_dir_input = QLineEdit(self.alarms_base_dir); self.alarm_dir_input.textChanged.connect(self.update_alarm_dir)
+        self.last_alarm_label = QLabel("Henüz alarm yok."); self.last_alarm_label.setWordWrap(True)
+        alarm_layout.addRow("Alarm Eşiği (> °C):", self.alarm_threshold_input); alarm_layout.addRow("Alarm Sonrası Bekleme:", self.alarm_cooldown_input)
+        alarm_layout.addRow("Kayıt Klasörü:", self.alarm_dir_input); alarm_layout.addRow("Son Alarm Durumu:", self.last_alarm_label)
         alarm_box.setLayout(alarm_layout)
-
-        # === YENİ: ALARM GÜNLÜĞÜ KUTUSU ===
-        log_box = QGroupBox("Alarm Günlüğü")
-        log_layout = QVBoxLayout()
-        self.alarm_log_widget = QListWidget()
-        self.alarm_log_widget.setFixedHeight(150) # Liste kutusunun yüksekliğini ayarla
-        log_layout.addWidget(self.alarm_log_widget)
-        log_box.setLayout(log_layout)
-        # ==================================
+        log_box = QGroupBox("Alarm Günlüğü"); log_layout = QVBoxLayout()
+        self.alarm_log_widget = QTableWidget()
+        self.alarm_log_widget.setColumnCount(4); self.alarm_log_widget.setHorizontalHeaderLabels(['Zaman', 'Kamera Adı', 'Alarm Tipi', 'Değer'])
+        self.alarm_log_widget.setFixedHeight(150); self.alarm_log_widget.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.alarm_log_widget.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch); self.alarm_log_widget.verticalHeader().setVisible(False)
+        log_layout.addWidget(self.alarm_log_widget); log_box.setLayout(log_layout)
 
         right_panel_layout.addWidget(ptz_main_box)
         right_panel_layout.addWidget(thermal_box)
         right_panel_layout.addWidget(alarm_box)
-        right_panel_layout.addWidget(log_box) # Yeni kutuyu arayüze ekle
+        right_panel_layout.addWidget(log_box)
         right_panel_layout.addStretch()
-
+        
         main_layout.addLayout(camera_layout)
         main_layout.addLayout(right_panel_layout)
         self.setLayout(main_layout)
-    
-    # === YENİ: ALARM GÜNLÜĞÜ WIDGET'INI GÜNCELLEYEN FONKSİYON ===
-    def update_alarm_log_widget(self):
-        self.alarm_log_widget.clear()
-        self.alarm_log_widget.addItems(self.alarm_history)
-        # En son eklenen (listenin en başındaki) alarmı kırmızı yap
-        if self.alarm_log_widget.count() > 0:
-            self.alarm_log_widget.item(0).setForeground(QColor('red'))
-    # ========================================================
 
-    # ... Diğer fonksiyonlar (init_threads, ptz hareketleri vb.) ...
+    def update_alarm_log_widget(self):
+        self.alarm_log_widget.setRowCount(0)
+        self.alarm_log_widget.setRowCount(len(self.alarm_history))
+        for row_index, alarm_record in enumerate(self.alarm_history):
+            time_item = QTableWidgetItem(alarm_record.get('time', '-'))
+            camera_item = QTableWidgetItem(alarm_record.get('camera', '-'))
+            type_item = QTableWidgetItem(alarm_record.get('type', '-'))
+            value_item = QTableWidgetItem(alarm_record.get('value', '-'))
+            if row_index == 0:
+                red_color = QColor('red')
+                time_item.setForeground(red_color)
+                camera_item.setForeground(red_color)
+                type_item.setForeground(red_color)
+                value_item.setForeground(red_color)
+            self.alarm_log_widget.setItem(row_index, 0, time_item)
+            self.alarm_log_widget.setItem(row_index, 1, camera_item)
+            self.alarm_log_widget.setItem(row_index, 2, type_item)
+            self.alarm_log_widget.setItem(row_index, 3, value_item)
+
     def init_threads(self):
         self.thread_normal = RTSPVideoThread(RTSP_URL_NORMAL, False, self)
         self.thread_thermal = RTSPVideoThread(RTSP_URL_THERMAL, True, self)
         self.thread_thermal_data = ThermalDataThread(REALTIME_THERMOMETRY_URL, CAMERA_USER, CAMERA_PASS)
-        
         self.thread_normal.change_pixmap_signal.connect(self.update_image1)
         self.thread_thermal.change_pixmap_signal.connect(self.update_image2)
-        
         self.thread_normal.connection_status_signal.connect(lambda s: self.camera1_label.setText(s) if "Hata" in s or "Çöktü" in s else None)
         self.thread_thermal.connection_status_signal.connect(lambda s: self.camera2_label.setText(s) if "Hata" in s or "Çöktü" in s else None)
-        
         self.thread_thermal_data.thermal_data_updated.connect(self.update_thermal_data)
-        
         self.thread_normal.start()
         self.thread_thermal.start()
         self.thread_thermal_data.start()
@@ -360,13 +363,10 @@ class PTZControlApp(QWidget):
                 response = requests.get(PTZ_STATUS_URL, auth=self.auth, timeout=1)
                 if response.status_code == 200:
                     root = ET.fromstring(response.content)
-                    # Namespace'i dinamik olarak bulmak daha sağlamdır
                     ns_map = {node[0]: node[1] for _, node in ET.iterparse(response.content, events=['start-ns'])}
-                    ns = ns_map.get('', 'http://www.isapi.org/ver20/XMLSchema') # Varsayılan namespace
-                    
+                    ns = ns_map.get('', 'http://www.isapi.org/ver20/XMLSchema')
                     azimuth_node = root.find(f'.//{{{ns}}}azimuth')
                     elevation_node = root.find(f'.//{{{ns}}}elevation')
-                    
                     if azimuth_node is not None and elevation_node is not None:
                         azimuth = float(azimuth_node.text) / 10.0
                         elevation = float(elevation_node.text) / 10.0
@@ -402,7 +402,7 @@ class PTZControlApp(QWidget):
         try:
             req = self.ptz.create_type('ContinuousMove')
             req.ProfileToken = self.token
-            req.Velocity = {'PanTilt': {'x': pan, 'y': tilt, 'Zoom':0}}
+            req.Velocity = {'PanTilt': {'x': pan, 'y': tilt}, 'Zoom': {'x': 0}}
             self.ptz.ContinuousMove(req)
         except Exception as e:
             print(f"Sürekli hareket hatası: {e}")
@@ -410,7 +410,7 @@ class PTZControlApp(QWidget):
     def move_camera_stop(self):
         if not self.ptz: return
         try:
-            self.ptz.Stop({'ProfileToken': self.token})
+            self.ptz.Stop({'ProfileToken': self.token, 'PanTilt': True, 'Zoom': False})
         except Exception as e:
             print(f"Durdurma hatası: {e}")
 
@@ -428,7 +428,7 @@ class PTZControlApp(QWidget):
             onvif_pan, onvif_tilt = self.degree_to_onvif_accurate(pan_deg, tilt_deg)
             req = self.ptz.create_type('AbsoluteMove')
             req.ProfileToken = self.token
-            req.Position = {'PanTilt': {'x': onvif_pan, 'y': onvif_tilt, 'Zoom':0}}
+            req.Position = {'PanTilt': {'x': onvif_pan, 'y': onvif_tilt}, 'Zoom': {'x': 0}}
             self.ptz.AbsoluteMove(req)
         except Exception as e: print(f"Pozisyonlama hatası: {e}")
             
@@ -440,26 +440,20 @@ class PTZControlApp(QWidget):
 
     @pyqtSlot(dict)
     def update_thermal_data(self, data):
-        # ... (Bu fonksiyonda değişiklik yok)
         try:
+            self.last_thermal_data = data #JSON verisini saklamak için data
             upload_list = data.get('ThermometryUploadList', {}).get('ThermometryUpload', [])
             if not upload_list: return
-            
             therm_data = upload_list[0]
-            
             cfg_data = therm_data.get('LinePolygonThermCfg', {})
             avg_temp = cfg_data.get('AverageTemperature')
             max_temp = cfg_data.get('MaxTemperature')
             min_temp = cfg_data.get('MinTemperature')
-            
             self.last_max_temp = max_temp
             self.last_min_temp = min_temp
-
             hotspot_node = therm_data.get('HighestPoint')
             coldspot_node = therm_data.get('LowestPoint')
-            
             self.temp_avg_label.setText(f"{avg_temp:.1f} °C" if avg_temp is not None else "-")
-
             if max_temp is not None and hotspot_node:
                 self.thermal_hotspot_coords = (hotspot_node.get('positionX', 0), hotspot_node.get('positionY', 0))
                 self.max_point_temp_label.setText(f"{max_temp:.1f} °C")
@@ -468,7 +462,6 @@ class PTZControlApp(QWidget):
                 self.thermal_hotspot_coords = None
                 self.max_point_temp_label.setText("-")
                 self.max_point_pos_label.setText("-")
-
             if min_temp is not None and coldspot_node:
                 self.thermal_coldspot_coords = (coldspot_node.get('positionX', 0), coldspot_node.get('positionY', 0))
                 self.min_point_temp_label.setText(f"{min_temp:.1f} °C")
@@ -477,32 +470,23 @@ class PTZControlApp(QWidget):
                 self.thermal_coldspot_coords = None
                 self.min_point_temp_label.setText("-")
                 self.min_point_pos_label.setText("-")
-                
             self.check_for_alarm()
-
         except Exception as e: 
             print(f"Termal JSON işleme hatası: {e}")
             
     def check_for_alarm(self):
-        if self.last_max_temp is None:
-            return
-
+        if self.last_max_temp is None: return
         try:
             alarm_threshold = float(self.alarm_threshold_input.text())
         except ValueError:
             return
-
         cooldown_seconds = self.alarm_cooldown_input.value()
-        if time.time() - self.last_alarm_time < cooldown_seconds:
-            return
-
+        if time.time() - self.last_alarm_time < cooldown_seconds: return
         if self.last_max_temp > alarm_threshold:
             print(f"ALARM! Maksimum sıcaklık {self.last_max_temp:.1f}°C, eşik olan {alarm_threshold}°C değerini aştı.")
-            
             with self.frame_lock:
                 normal_frame_to_save = self.latest_normal_frame
                 thermal_frame_to_save = self.latest_thermal_frame
-
             if normal_frame_to_save is not None and thermal_frame_to_save is not None:
                 timestamp_str_folder = time.strftime("%Y-%m-%d_%H-%M-%S")
                 alarm_folder_path = os.path.join(self.alarms_base_dir, timestamp_str_folder)
@@ -510,39 +494,37 @@ class PTZControlApp(QWidget):
 
                 normal_image_path = os.path.join(alarm_folder_path, "normal.jpg")
                 thermal_image_path = os.path.join(alarm_folder_path, "thermal.jpg")
+                
+                #JSON dosyasının yolunu belirle
+                json_data_path = os.path.join(alarm_folder_path, "alarm_data.json")
 
                 cv2.imwrite(normal_image_path, normal_frame_to_save)
                 cv2.imwrite(thermal_image_path, thermal_frame_to_save)
                 
-                print(f"Görüntüler şuraya kaydedildi: {alarm_folder_path}")
+                #JSON verisini dosyaya yaz
+                if self.last_thermal_data:
+                    with open(json_data_path, 'w', encoding='utf-8') as f:
+                        json.dump(self.last_thermal_data, f, ensure_ascii=False, indent=4)
+
+                print(f"Görüntüler ve veri şuraya kaydedildi: {alarm_folder_path}")
                 self.last_alarm_label.setText(f"{timestamp_str_folder}\nSıcaklık: {self.last_max_temp:.1f}°C")
                 self.last_alarm_time = time.time()
-                
-                # === YENİ: ALARM GÜNLÜĞÜNÜ GÜNCELLE ===
-                timestamp_str_log = time.strftime("%H:%M:%S")
-                log_message = f"{timestamp_str_log} - ALARM: {self.last_max_temp:.1f}°C"
-                self.alarm_history.insert(0, log_message)
-                # Listeyi sınırla
-                if len(self.alarm_history) > MAX_LOG_ENTRIES:
-                    self.alarm_history.pop()
-                # Arayüzü güncelle
+                alarm_record = {"time": time.strftime("%H:%M:%S"), "camera": "Termal Kamera", "type": f"Yüksek Sıcaklık", "value": f"{self.last_max_temp:.1f}°C"}
+                self.alarm_history.insert(0, alarm_record)
+                if len(self.alarm_history) > MAX_LOG_ENTRIES: self.alarm_history.pop()
                 self.update_alarm_log_widget()
-                # ======================================
-
             else:
                 print("Alarm tetiklendi ancak kaydedilecek görüntüler henüz mevcut değil.")
     
     def closeEvent(self, event):
-        # ... (Bu fonksiyonda değişiklik yok)
         print("Uygulama kapatılıyor...")
         self.ptz_status_thread_active = False
         self.rotating = False
-        self.move_camera_stop()
-        
+        if self.ptz:
+            self.move_camera_stop()
         self.thread_normal.stop()
         self.thread_thermal.stop()
         self.thread_thermal_data.stop()
-        
         event.accept()
 
 if __name__ == "__main__":

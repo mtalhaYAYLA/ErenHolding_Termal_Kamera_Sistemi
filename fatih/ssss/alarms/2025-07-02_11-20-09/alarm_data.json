@@ -1,0 +1,56 @@
+{
+    "ThermometryUploadList": {
+        "ThermometryUpload": [
+            {
+                "relativeTime": 1707390214,
+                "absTime": 1707357446,
+                "presetNo": 0,
+                "LinePolygonThermCfg": {
+                    "MaxTemperature": 48.6,
+                    "MinTemperature": 26.0,
+                    "AverageTemperature": 29.5,
+                    "TemperatureDiff": 22.6,
+                    "Region": [
+                        {
+                            "Point": {
+                                "positionX": 0.0,
+                                "positionY": 0.0
+                            }
+                        },
+                        {
+                            "Point": {
+                                "positionX": 0.0,
+                                "positionY": 1.0
+                            }
+                        },
+                        {
+                            "Point": {
+                                "positionX": 1.0,
+                                "positionY": 1.0
+                            }
+                        },
+                        {
+                            "Point": {
+                                "positionX": 1.0,
+                                "positionY": 0.0
+                            }
+                        }
+                    ]
+                },
+                "thermometryUnit": 0,
+                "dataType": 2,
+                "isFreezedata": false,
+                "HighestPoint": {
+                    "positionX": 0.702,
+                    "positionY": 0.251
+                },
+                "LowestPoint": {
+                    "positionX": 0.927,
+                    "positionY": 0.774
+                },
+                "faceSnapThermometryEnabled": false,
+                "timestamp": 3013544562
+            }
+        ]
+    }
+}

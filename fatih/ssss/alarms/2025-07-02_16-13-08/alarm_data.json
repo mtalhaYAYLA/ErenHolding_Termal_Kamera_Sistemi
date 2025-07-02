@@ -1,0 +1,65 @@
+{
+    "ThermometryUploadList": {
+        "ThermometryUpload": [
+            {
+                "relativeTime": 1707410246,
+                "absTime": 1707377478,
+                "ruleName": "ID:1",
+                "ruleID": 1,
+                "ruleCalibType": 1,
+                "presetNo": 3,
+                "LinePolygonThermCfg": {
+                    "MaxTemperature": 27.8,
+                    "MinTemperature": 26.6,
+                    "AverageTemperature": 27.1,
+                    "TemperatureDiff": 1.2,
+                    "Region": [
+                        {
+                            "Point": {
+                                "positionX": 0.073,
+                                "positionY": 0.171
+                            }
+                        },
+                        {
+                            "Point": {
+                                "positionX": 0.089,
+                                "positionY": 0.84
+                            }
+                        },
+                        {
+                            "Point": {
+                                "positionX": 0.804,
+                                "positionY": 0.829
+                            }
+                        },
+                        {
+                            "Point": {
+                                "positionX": 0.308,
+                                "positionY": 0.369
+                            }
+                        },
+                        {
+                            "Point": {
+                                "positionX": 0.653,
+                                "positionY": 0.408
+                            }
+                        }
+                    ]
+                },
+                "thermometryUnit": 0,
+                "dataType": 2,
+                "isFreezedata": false,
+                "HighestPoint": {
+                    "positionX": 0.078,
+                    "positionY": 0.345
+                },
+                "LowestPoint": {
+                    "positionX": 0.48,
+                    "positionY": 0.387
+                },
+                "faceSnapThermometryEnabled": false,
+                "timestamp": 300724346
+            }
+        ]
+    }
+}
