@@ -1,0 +1,26 @@
+{
+  "camera": {
+    "ip": "192.168.1.64",
+    "port": 80,
+    "user": "admin",
+    "password": "ErenEnerji"
+  },
+  "scan_settings": {
+    "mode": "grid",
+    "pan_start_deg": 180,
+    "pan_end_deg": 270,
+    "tilt_start_deg": 20,
+    "tilt_end_deg": 30,
+    "step_deg": 10,
+    "wait_sec": 5
+  },
+  "alarm_settings": {
+    "threshold_c": 40.0,
+    "cooldown_sec": 30,
+    "save_directory": "alarms"
+  },
+  "calibration": {
+    "thermal_fov_h": 50.0,
+    "thermal_fov_v": 37.0
+  }
+}
